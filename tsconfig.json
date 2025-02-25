@@ -1,0 +1,19 @@
+{
+	"compilerOptions": {
+		"target": "ESNext",
+		"module": "ESNext",
+		"strict": true,
+		"esModuleInterop": true,
+		"forceConsistentCasingInFileNames": true,
+		"skipLibCheck": true,
+		"outDir": "./dist",
+		"rootDir": "./src",
+		"resolveJsonModule": true,
+		"noImplicitAny": true,
+		"moduleResolution": "Node",
+		"declaration": true,
+		"strictNullChecks": true,
+	},
+	"include": [ "src/**/*.ts", "src/tests/**/*.ts" ],
+	"exclude": [ "node_modules", "dist" ]
+}
