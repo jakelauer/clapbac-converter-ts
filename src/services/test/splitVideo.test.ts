@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs-extra';
 import path from 'path';
-import { splitVideo } from '../splitVideo';
+import { splitVideo } from '../split-video';
 import { execShellCommand } from '../../utils/shell';
 import { parseSubtitleFile } from '../../utils/subtitle';
 import { progressManager } from '../../utils/progress';

@@ -5,8 +5,8 @@ import { FFmpegTaskParams } from "./ffmpeg-task-params";
 import { FfmpegSizePresets, FfmpegSizePreset } from "./ffmpeg-size-presets";
 import crypto from 'node:crypto';
 import fs from "fs-extra";
-
-
+import path from "node:path";
+import { createFilenameHash } from "../../utils/hash";
 
 export abstract class FFmpegTask {
 	constructor(private readonly extension: string) {
@@ -55,39 +55,71 @@ export abstract class FFmpegTask {
 		return `${ffmpegCommandString} -vf "${vfScaleString}"`;
 	}
 
-	public async run<TParams extends FFmpegTaskParams>(params: TParams, sizePreset: FfmpegSizePreset): Promise<string> {
-		const argumentList = this.buildArgumentList(params);
+	protected generateOutputPath(params: FFmpegTaskParams, sizePreset: FfmpegSizePreset): string {
+		const videoPathParts = params.videoPath.split('/');
+		const inputFilenameNoExtension = videoPathParts.pop()?.split('.').slice(0, -1).join('.');
+		if (!inputFilenameNoExtension) {
+			throw new Error('Input filename failed to parse');
+		}
 
-		//const outputPath = `${params.showMetadata.showName}-${params.showMetadata.seasonNumber}x${params.showMetadata.episodeNumber}.${sizePreset}.mp4`;
+		const inputDir = videoPathParts.join('/');
+		const outputDir = params.outputDir || inputDir;
 
-		const inputFilenameNoExtension = params.videoPath.split('/').pop()?.split('.').slice(0, -1).join('.');
-		const inputDir = params.videoPath.split('/').slice(0, -1).join('/');
-		const outputDir = params.outputDir ?? inputDir;
-		const md5HashOfFilename = crypto.createHash('md5').update(`${inputFilenameNoExtension}`).digest('hex');
-		const outputPath = `${outputDir}/${md5HashOfFilename}-${params.segmentIndex}-${sizePreset}.${this.extension}`;
+		const md5HashOfFilename = createFilenameHash(params.videoPath);
+
+		const filenameChildSegmentPortion = params.childSegmentIndex !== null && params.childSegmentIndex !== undefined
+			? `${params.childSegmentIndex}-`
+			: '';
+		const outputFilename = `${md5HashOfFilename}-${params.segmentIndex}-${filenameChildSegmentPortion}${sizePreset}`;
+		const outputFilenameWithExtension = `${outputFilename}.${this.extension}`;
+
+		progressManager.log(`Output filename: ${outputFilenameWithExtension}`);
+
+		return path.join(outputDir, outputFilenameWithExtension);
+	}
+
+	protected generateCommand(params: FFmpegTaskParams, outputPath: string, sizePreset: FfmpegSizePreset): string {
+		// Build the FFmpeg command
+		let command = `${ffmpegPath}`; // Removed -hwaccel videotoolbox
+		command += ` -i "${params.videoPath}"`; // Removed -accurate_seek
+		command += ` -ss ${params.startTime}`;
+		command += ` -to ${params.endTime}`;
+		command += ` ${this.buildArgumentList(params).join(' ')}`;
+		command += ` "${outputPath}"`;
+
+		progressManager.log(`Base FFmpeg command: ${command}`);
+		command = this.setSizeForPreset(command, sizePreset);
+		progressManager.log(`Final FFmpeg command: ${command}`);
+
+		return command;
+	}
+
+	public async one<TParams extends FFmpegTaskParams>(params: TParams, sizePreset: FfmpegSizePreset): Promise<string> {
+		const outputPath = this.generateOutputPath(params, sizePreset);
+
+		progressManager.log(`Params: ${JSON.stringify(params, null, 2)}`);
 
 		if (fs.pathExistsSync(outputPath)) {
 			progressManager.log(`Segment ${params.segmentIndex} already exists. Skipping...`);
 			return outputPath;
 		}
 
-		// Build the FFmpeg command
-		let command = `${ffmpegPath}`; // Removed -hwaccel videotoolbox
-		command += ` -i "${params.videoPath}"`; // Removed -accurate_seek
-		command += ` -ss ${params.startTime}`;
-		command += ` -to ${params.endTime}`;
-		command += ` ${argumentList.join(' ')}`;
-		command += ` "${outputPath}"`;
-
-		progressManager.log(`Executing FFmpeg command: ${command}`);
-
-		progressManager.log(`Base FFmpeg command: ${command}`);
-		command = this.setSizeForPreset(command, sizePreset);
-		progressManager.log(`Final FFmpeg command: ${command}`);
+		const command = this.generateCommand(params, outputPath, sizePreset);
+		progressManager.log(`Executing FFmpeg command for segment ${params.segmentIndex} and child segment ${params.childSegmentIndex}: ${command}`);
 
 		await execShellCommand(command);
 
 		return outputPath;
+	}
+
+	public async multi<TParams extends FFmpegTaskParams>(params: TParams, sizePresets: FfmpegSizePreset[]): Promise<string[]> {
+		// Process all size presets in parallel
+		const outputPromises = sizePresets.map(sizePreset =>
+			this.one(params, sizePreset)
+		);
+
+		// Wait for all size preset conversions to complete
+		return Promise.all(outputPromises);
 	}
 
 	protected abstract buildArgumentList<TParams extends FFmpegTaskParams>(params: TParams): string[];

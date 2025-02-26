@@ -1,12 +1,13 @@
 import fs from 'fs-extra';
 import path from 'path';
-import { splitVideo } from './splitVideo.js';
+import { splitVideo } from './split-video/index.js';
 import { progressManager } from '../utils/progress.js';
 import { extractSubtitlesFromMKV } from '../utils/mkvExtractor.js';
 import { isVideoComplete, markVideoComplete } from '../utils/completion.js';
 import { parseSubtitleFile } from "../utils/subtitle.js";
 import { getVideoFPS } from '../utils/ffmpeg.js';
-import { parseTimestampToStruct } from "./splitVideo.js";
+import { parseTimestampToStruct } from "./split-video/index.js";
+import { createFilenameHash } from '../utils/hash.js';
 
 interface VideoMetadata {
 	show?: string;
@@ -43,6 +44,7 @@ export interface VideoSegment {
 interface VideoProcessingData {
 	metadata: VideoMetadata;
 	segments: VideoSegment[];
+	fileHash: string;
 }
 
 interface ProcessOptions {
@@ -114,6 +116,7 @@ const processVideoFile = async (
 	const jsonData: VideoProcessingData = {
 		metadata: await extractVideoMetadata(videoPath),
 		segments: segmentsData,
+		fileHash: createFilenameHash(videoPath)
 	};
 
 	const jsonOutputPath = path.join(outputDir, `${baseName}.json`);
@@ -280,11 +283,7 @@ function mergeSegmentGroup(group: VideoSegment[], fps: number): VideoSegment {
 	if (group.length === 1) {
 		return {
 			...group[0],
-			childSegments: [{
-				startTime: group[0].startTime,
-				endTime: group[0].endTime,
-				text: group[0].subtitle
-			}]
+			childSegments: undefined
 		};
 	}
 

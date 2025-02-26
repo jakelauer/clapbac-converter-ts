@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'fs-extra';
 import path from 'path';
 import { processVideos } from '../processVideos';
-import { splitVideo } from '../splitVideo';
+import { splitVideo } from '../split-video';
 import { progressManager } from '../../utils/progress';
 import { extractSubtitlesFromMKV } from '../../utils/mkvExtractor';
 import { Dirent } from 'fs';

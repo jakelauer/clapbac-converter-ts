@@ -11,7 +11,7 @@ export interface FFmpegTaskParams {
 	startTime: string;
 	endTime: string;
 	subtitlePath: string;
-	outputDir?: string;
+	outputDir: string;
 	segmentIndex: number;
-	//showMetadata: InputShowMetadata;
+	childSegmentIndex: number | null;
 }
