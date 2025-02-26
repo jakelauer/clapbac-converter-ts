@@ -142,6 +142,7 @@ export const setupCLI = async () => {
 				if (options.embedded && (q.name === 'subtitleDir' || q.name === 'subtitleSource')) {
 					return false;
 				}
+
 				return !options[q.name as keyof typeof options];
 			});
 

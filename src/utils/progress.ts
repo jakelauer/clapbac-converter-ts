@@ -1,4 +1,5 @@
 import cliProgress from 'cli-progress';
+import { FileLogger } from "./file-logger";
 
 class ProgressManager {
 	private multibar: cliProgress.MultiBar;
@@ -34,18 +35,14 @@ class ProgressManager {
 		// Store the log message
 		this.logLines.push(message);
 
-		// Clear the progress bar line if it exists
-		if (this.bars.size > 0) {
-			process.stdout.write('\x1B[1A\x1B[2K');
-		}
+		FileLogger.log(message);
 
-		// Print the message
-		console.log(message);
+		// Use process.stdout to write directly, with extra newlines
+		process.stdout.write("\n" + message + "\n\n");
 
-		// Redraw any active progress bars
-		this.bars.forEach(bar => {
-			bar.render();
-		});
+		// Just stop to clear the current render state
+		// The multibar will automatically redraw on next update
+		this.multibar.stop();
 	}
 }
 

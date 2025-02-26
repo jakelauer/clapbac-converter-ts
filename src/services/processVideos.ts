@@ -33,7 +33,7 @@ export interface VideoSegment {
 	duration: number;
 	frameCount: number;
 	subtitle: string;
-	internalSegments?: Array<{
+	childSegments?: Array<{
 		startTime: number;
 		endTime: number;
 		text: string;
@@ -280,7 +280,7 @@ function mergeSegmentGroup(group: VideoSegment[], fps: number): VideoSegment {
 	if (group.length === 1) {
 		return {
 			...group[0],
-			internalSegments: [{
+			childSegments: [{
 				startTime: group[0].startTime,
 				endTime: group[0].endTime,
 				text: group[0].subtitle
@@ -300,7 +300,7 @@ function mergeSegmentGroup(group: VideoSegment[], fps: number): VideoSegment {
 		duration: lastSegment.endTime - firstSegment.startTime,
 		frameCount: Math.ceil(fps * (lastSegment.endTime - firstSegment.startTime)),
 		subtitle: group.map(seg => seg.subtitle).join('\n'),
-		internalSegments: group.map(seg => ({
+		childSegments: group.map(seg => ({
 			startTime: seg.startTime,
 			endTime: seg.endTime,
 			text: seg.subtitle

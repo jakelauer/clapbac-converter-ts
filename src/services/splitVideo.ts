@@ -5,8 +5,8 @@ import { execShellCommand } from '../utils/shell.js';
 import { progressManager } from '../utils/progress.js';
 import { VideoSegment } from './processVideos.js';
 import ffmpegPath from "ffmpeg-static";
-import { FileLogger } from "../utils/file-logger.js";
-import { parse } from 'subtitle'; // Ensure you install this: npm install subtitle
+import { Mp4Task, GifTask } from "./ffmpeg/outputs/index.js";
+import { FFmpegTaskParams } from "./ffmpeg/ffmpeg-task-params.js";
 
 interface Segment {
 	index: number;
@@ -34,104 +34,86 @@ const createOutputDirectory = (videoPath: string, outputDir: string): string => 
 	return outputFolder;
 };
 
-// Helper function to parse ASS timecode to seconds
-function assTimeToSeconds(time: string): number {
-	const [hours, minutes, seconds] = time.split(':');
-	return parseInt(hours, 10) * 3600 + parseInt(minutes, 10) * 60 + parseFloat(seconds);
-}
-
-// Helper function to format seconds back to ASS timecode
-function secondsToAssTime(seconds: number): string {
-	const hours = Math.floor(seconds / 3600);
-	const minutes = Math.floor((seconds % 3600) / 60);
-	const remainingSeconds = seconds % 60;
-	return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(remainingSeconds.toFixed(2)).padStart(5, '0')}`;
-}
-
 const processSegment = async (
 	segment: VideoSegment,
 	videoPath: string,
 	outputFolder: string,
 	videoName: string,
 ): Promise<void> => {
-	const outputPath = path.join(outputFolder, `segment_${segment.index}.mp4`);
+	const startTime = segment.startTimeStamp;
+	const endTime = segment.endTimeStamp;
 
-	if (fs.pathExistsSync(outputPath)) {
-		progressManager.log(`Segment ${segment.index} already exists. Skipping...`);
-		FileLogger.log(`Segment ${segment.index} skipped - already exists`);
-	} else {
-		const startTime = segment.startTimeStamp;
-		const endTime = segment.endTimeStamp;
+	// Create a temporary ASS subtitle file for this segment (convert from SRT)
+	const tempSrtPath = path.join(outputFolder, `temp_subtitle_${segment.index}.srt`);
+	const tempAssPath = path.join(outputFolder, `temp_subtitle_${segment.index}.ass`);
 
-		// Create a temporary ASS subtitle file for this segment (convert from SRT)
-		const tempSrtPath = path.join(outputFolder, `temp_subtitle_${segment.index}.srt`);
-		const tempAssPath = path.join(outputFolder, `temp_subtitle_${segment.index}.ass`);
+	// Generate SRT subtitle content (using ABSOLUTE, original timings)
+	let subtitleContent = "";
+	let srtIndex = 1;
 
-		// Generate SRT subtitle content (using ABSOLUTE, original timings)
-		let subtitleContent = "";
-		let srtIndex = 1;
+	// Add each child segment with correct timing
+	if (segment.childSegments) {
+		for (let i = 0; i < segment.childSegments.length; i++) {
+			const child = segment.childSegments[i];
+			const startStr = formatDuration(child.startTime);
+			const endStr = formatDuration(child.endTime);
+			const processedText = child.text.replace(/\n/g, '\\N');
 
-		// Add each internal segment with correct timing
-		if (segment.internalSegments) {
-			for (const internal of segment.internalSegments) {
-				const startStr = formatDuration(internal.startTime);
-				const endStr = formatDuration(internal.endTime);
-				const processedText = internal.text.replace(/\n/g, '\\N');
-
-				FileLogger.log(`Segment ${segment.index}, start: ${internal.startTime}, end: ${internal.endTime}`);
-
-				subtitleContent += `${srtIndex}\n`;
-				subtitleContent += `${startStr} --> ${endStr}\n`;
-				subtitleContent += `${processedText}\n\n`;
-				srtIndex++;
-			}
-		} else {
-			// Fallback for segments without internal timing
-			const processedText = segment.subtitle.replace(/\n/g, '\\N');
-			const duration = segment.endTime - segment.startTime;
-			const startStr = formatDuration(segment.startTime);
-			const endStr = formatDuration(segment.endTime);
+			progressManager.log(`Segment ${segment.index}, child segment ${i}, start: ${child.startTime}, end: ${child.endTime}`);
 
 			subtitleContent += `${srtIndex}\n`;
 			subtitleContent += `${startStr} --> ${endStr}\n`;
 			subtitleContent += `${processedText}\n\n`;
 			srtIndex++;
 		}
+	} else {
+		// Fallback for segments without child timing
+		const processedText = segment.subtitle.replace(/\n/g, '\\N');
+		const startStr = formatDuration(segment.startTime);
+		const endStr = formatDuration(segment.endTime);
 
-		fs.writeFileSync(tempSrtPath, subtitleContent);
-
-		// Convert SRT to ASS using FFmpeg
-		const convertCommand = `${ffmpegPath} -i "${tempSrtPath}" "${tempAssPath}"`;
-		FileLogger.log(`SRT to ASS conversion command: ${convertCommand}`); // Log conversion command
-		await execShellCommand(convertCommand);
-
-		const assContent = fs.readFileSync(tempAssPath, 'utf-8');
-		fs.writeFileSync(tempAssPath, assContent);
-
-		// Build the FFmpeg command
-		let command = `${ffmpegPath}`; // Removed -hwaccel videotoolbox
-		command += ` -i "${videoPath}"`; // Removed -accurate_seek
-		command += ` -ss ${startTime}`;
-		command += ` -to ${endTime}`;
-		command += ` -q:v 60`;
-		command += ` -c:v libx264`; // Changed to software encoder
-		command += ` -c:a copy`;
-		command += ` -map 0:v:0`;
-		command += ` -map 0:a:0`;
-		command += ` -copyts`;
-		command += ` -start_at_zero`;
-		command += ` -vf "ass='${tempAssPath.replace(/[\\]/g, '/')}'"`; // Use ass filter with setpts
-		command += ` "${outputPath}"`;
-
-		FileLogger.log(`Segment ${segment.index} command: ${command}`);
-		FileLogger.log(`Executing FFmpeg command: ${command}`);
-		progressManager.log(`Executing FFmpeg command: ${command}`);
-		await execShellCommand(command);
-
-		// Clean up temporary subtitle files
-		//fs.removeSync(tempSrtPath);
-		//fs.removeSync(tempAssPath);
+		subtitleContent += `${srtIndex}\n`;
+		subtitleContent += `${startStr} --> ${endStr}\n`;
+		subtitleContent += `${processedText}\n\n`;
+		srtIndex++;
 	}
+
+	fs.writeFileSync(tempSrtPath, subtitleContent);
+
+	// Convert SRT to ASS using FFmpeg with overwrite option
+	const convertCommand = `${ffmpegPath} -y -i "${tempSrtPath}" "${tempAssPath}"`;
+	progressManager.log(`SRT to ASS conversion command: ${convertCommand}`); // Log conversion command
+
+	await execShellCommand(convertCommand);
+
+	progressManager.log(`SRT to ASS conversion complete`);
+
+	const assContent = fs.readFileSync(tempAssPath, 'utf-8');
+	fs.writeFileSync(tempAssPath, assContent);
+
+	const baseParams: FFmpegTaskParams = {
+		videoPath,
+		startTime,
+		endTime,
+		subtitlePath: tempAssPath,
+		outputDir: outputFolder,
+		segmentIndex: segment.index,
+	}
+
+	progressManager.log(`Running tasks for segment ${segment.index}`);
+	const mp4Task = new Mp4Task();
+	const gifTask = new GifTask();
+
+	const mp4_1080p_OutputPath = await mp4Task.run(baseParams, '1080p');
+	const mp4_720p_OutputPath = await mp4Task.run(baseParams, '720p');
+	const mp4_480p_OutputPath = await mp4Task.run(baseParams, '480p');
+	const gif_480p_OutputPath = await gifTask.run(baseParams, '480p');
+	const gif_360p_OutputPath = await gifTask.run(baseParams, '360p');
+	const gif_240p_OutputPath = await gifTask.run(baseParams, '240p');
+
+	fs.removeSync(tempAssPath);
+	fs.removeSync(tempSrtPath);
+
 	progressManager.updateProgress(videoName, segment.index);
 };
 
